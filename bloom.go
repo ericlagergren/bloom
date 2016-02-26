@@ -5,10 +5,24 @@ import (
 	"math"
 )
 
+const (
+	word = 64
+	mask = 63
+)
+
 // Filter is a Bloom filter.
 type Filter struct {
-	bits    bitvec
-	hashers int
+	bits   []uint64
+	nbits  uint64
+	hashes int
+}
+
+func (f *Filter) isSet(pos uint64) bool {
+	return f.bits[pos/word]&(1<<(pos&mask)) != 0
+}
+
+func (f *Filter) set(pos uint64) {
+	f.bits[pos/word] |= 1 << (pos & mask)
 }
 
 // New creates a new Bloom Filter for n items with probability p.
@@ -24,40 +38,55 @@ func New(n int, p float64) *Filter {
 	n0 := float64(n)
 	m := math.Ceil((n0 * math.Log(p)) / lnsq)
 
+	nbits := uint64(m)
+
+	if nbits <= 512 {
+		nbits = 512
+	} else {
+		// Next power of two.
+		nbits--
+		nbits |= nbits >> 1
+		nbits |= nbits >> 2
+		nbits |= nbits >> 4
+		nbits |= nbits >> 8
+		nbits |= nbits >> 16
+		nbits |= nbits >> 32
+		nbits++
+	}
+
 	return &Filter{
-		// Multiple of 64.
-		bits: newBitVec((int(m) + _W/2) & (^(_W - 1))),
+		// Multiple of word.
+		bits:  make([]uint64, nbits/word),
+		nbits: nbits,
 
 		// Number rounds of hashing.
-		hashers: int(math.Ln2 * m / n0),
+		hashes: int(math.Ceil(math.Ln2 * m / n0)),
 	}
 }
 
 func (f Filter) dump() {
-	fmt.Println("%d bits with %d seeds", f.bits.len(), f.hashers)
+	fmt.Println("%d bits with %d seeds", f.nbits, f.hashes)
 }
 
 // Add adds a key to the filter.
 func (f *Filter) Add(key string) {
-	// Less Hashing, Same Performance: Building a Better Bloom Filter
-	// by Adam Kirsch and Michael Mitzenmacher
+	// "Less Hashing, Same Performance: Building a Better Bloom Filter
+	//  by Adam Kirsch and Michael Mitzenmacher"
 	// tells us gi(x) = h1(x) + ih2(x).
-	a := hash(key)
-	b := hash2(key)
-	m := uint32(f.bits.len())
-	for i := 0; i < f.hashers; i++ {
-		f.bits.set((a + b*uint32(i)) % m)
+	a, b := hash(key)
+	m := f.nbits
+	for i := 0; i < f.hashes; i++ {
+		f.set((a + b*uint64(i)) % m)
 	}
 }
 
 // Has returns true if the key probably exists in the filter.
 func (f *Filter) Has(key string) bool {
-	a := hash(key)
-	b := hash2(key)
-	m := uint32(f.bits.len())
-	for i := 0; i < f.hashers; i++ {
+	a, b := hash(key)
+	m := f.nbits
+	for i := 0; i < f.hashes; i++ {
 		// Any zero bits means the key has not been set yet.
-		if !f.bits.isSet((a + b*uint32(i)) % m) {
+		if !f.isSet((a + b*uint64(i)) % m) {
 			return false
 		}
 	}
