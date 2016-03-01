@@ -1,38 +1,16 @@
 package bloom
 
-import (
-	"unsafe"
-
-	"github.com/dchest/siphash"
-)
+import "github.com/EricLagergren/siphash"
 
 const (
-	seed  = 0xDEABEEF
-	seed2 = 0xCAFEBABE
+	k0 = 17697571051839533707
+	k1 = 15128385881502100741
 )
 
-func toBytes(data string) []byte {
-	str := *(*stringHeader)(unsafe.Pointer(&data))
-	sl := sliceHeader{
-		data: str.data,
-		len:  str.len,
-		cap:  str.len,
-	}
-	return *(*[]byte)(unsafe.Pointer(&sl))
-}
-
-// siphash
 func hash(data string) (a, b uint64) {
-	return siphash.Hash128(seed, seed2, toBytes(data))
+	return siphash.Hash128(k0, k1, toBytes(data))
 }
 
-type stringHeader struct {
-	data unsafe.Pointer
-	len  int
-}
-
-type sliceHeader struct {
-	data unsafe.Pointer
-	len  int
-	cap  int
+func hash2(data []byte) (a, b uint64) {
+	return siphash.Hash128(k0, k1, data)
 }
