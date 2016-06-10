@@ -19,16 +19,12 @@ type Filter struct {
 	items  uint64
 }
 
-func (f *Filter) getWord(i uint64) *uint64 {
-	return &f.bits[i>>shift]
-}
-
 func (f *Filter) isSet(i uint64) bool {
-	return ((*f.getWord(i) >> (i & (word - 1))) & 1) != 0
+	return ((f.bits[i>>shift] >> (i & (word - 1))) & 1) != 0
 }
 
 func (f *Filter) set(i uint64) {
-	*f.getWord(i) |= 1 << (i & (word - 1))
+	f.bits[i>>shift] |= 1 << (i & (word - 1))
 }
 
 // New creates a new Bloom Filter for n items with probability p.

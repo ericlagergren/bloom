@@ -17,7 +17,7 @@ import (
 
 func init() {
 	var err error
-	file, err := os.Open("/usr/share/dict/american-english")
+	file, err := os.Open("domains.txt")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -48,6 +48,7 @@ func init() {
 		filterAndreas.Add([]byte(data[i]))
 		filterWillf.Add([]byte(data[i]))
 		filterSpencer.AddKey(data[i])
+		gmap[data[i]] = struct{}{}
 	}
 }
 
@@ -73,7 +74,14 @@ var (
 	filterAndreas bbloom.Bloom
 	filterWillf   *bloom.BloomFilter
 	filterSpencer *cbfilter.Filter
+	gmap          = make(map[string]struct{})
 )
+
+func BenchmarkBloom(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		has = filterBloom.Has(str)
+	}
+}
 
 func BenchmarkAndreas(b *testing.B) {
 	buf := []byte(str)
@@ -81,12 +89,6 @@ func BenchmarkAndreas(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		has = filterAndreas.Has(buf)
-	}
-}
-
-func BenchmarkBloom(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		has = filterBloom.Has(str)
 	}
 }
 
@@ -102,6 +104,12 @@ func BenchmarkWillf(b *testing.B) {
 func BenchmarkSpencer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		has = filterSpencer.HasKey(str)
+	}
+}
+
+func BenchmarkMap(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, has = gmap[str]
 	}
 }
 
