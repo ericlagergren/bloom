@@ -114,12 +114,20 @@ func (f *Filter) HasBytes(key []byte) bool {
 	return true
 }
 
-const ver = 1
-const bpw = word >> 3
+const (
+	// Marshal version.
+	ver = 1
+
+	// Bytes per word.
+	bpw = word >> 3
+)
 
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (f *Filter) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 1+2*bpw+(f.nbits>>3))
+	data = make([]byte, 1+ // ver
+		bpw+ // items
+		bpw+ // hashes
+		(f.nbits>>3)) // bits
 	data[0] = ver
 	binary.LittleEndian.PutUint64(data[1:], f.items)
 	binary.LittleEndian.PutUint64(data[1+bpw:], uint64(f.hashes))
@@ -131,15 +139,15 @@ func (f *Filter) MarshalBinary() (data []byte, err error) {
 
 // MarshalBinary implements encoding.BinaryUnmarshaler.
 func (f *Filter) UnmarshalBinary(data []byte) error {
-	if len(data) < 1+2*bpw {
-		return errors.New("bloom.UnmarshalBinary: data to short. unknown encoding")
+	if len(data) < 1+bpw+bpw {
+		return errors.New("bloom.UnmarshalBinary: data too short, unknown encoding")
 	}
 	if data[0] != ver {
 		return errors.New("bloom.UnmarshalBinary: unknown encoding")
 	}
 	f.items = binary.LittleEndian.Uint64(data[1:])
 	f.hashes = int(binary.LittleEndian.Uint64(data[1+bpw:]))
-	data = data[1+(2*bpw):]
+	data = data[1+(bpw+bpw):]
 	f.nbits = uint64(len(data) << 3)
 	f.bits = make([]uint64, (f.nbits >> 6))
 	for i := range f.bits {

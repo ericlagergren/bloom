@@ -3,6 +3,7 @@ package bloom
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -36,10 +37,10 @@ func init() {
 	str = randString()
 	buf = []byte(str)
 
-	filterBloom = New(len(data), np)
-	filterAndreas = bbloom.New(float64(len(data)), np)
-	filterWillf = bloom.NewWithEstimates(uint(len(data)), np)
-	filterSpencer, err = cbfilter.NewFilter(uint32(len(data)), 8, np)
+	filterBloom = New(len(data), prob)
+	filterAndreas = bbloom.New(float64(len(data)), prob)
+	filterWillf = bloom.NewWithEstimates(uint(len(data)), prob)
+	filterSpencer, err = cbfilter.NewFilter(uint32(len(data)), 8, prob)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -52,10 +53,10 @@ func init() {
 	}
 }
 
-const np = 0.02
-const strlen = 25
+const prob = 0.02
 
 func randString() string {
+	const strlen = 25
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789=-()!@#$%^&*<>./?:;'`\\|"
 	var result [strlen]byte
 	for i := 0; i < strlen; i++ {
@@ -84,18 +85,12 @@ func BenchmarkBloom(b *testing.B) {
 }
 
 func BenchmarkAndreas(b *testing.B) {
-	buf := []byte(str)
-	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
 		has = filterAndreas.Has(buf)
 	}
 }
 
 func BenchmarkWillf(b *testing.B) {
-	buf := []byte(str)
-	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
 		has = filterWillf.Test(buf)
 	}
@@ -112,59 +107,55 @@ func BenchmarkMap(b *testing.B) {
 		_, has = gmap[str]
 	}
 }
-
-func TestAndreas(t *testing.T) {
-	var fp float64
-	for i := 0; i < 1e6; i++ {
-		if filterAndreas.Has([]byte(randString())) {
-			fp++
-		}
-	}
-	err := fp / float64(len(data))
-	if err > np*10 {
-		t.Fatalf("wanted %f error rate, got %f", np, err)
-	}
-	t.Logf("andreas: %f %f", fp, err)
+func TestBloom(t *testing.T) {
+	testBloomFunc(t, filterBloom.Has, "EricLagergren/bloom")
 }
 
-func TestBloom(t *testing.T) {
-	var fp float64
-	for i := 0; i < 1e6; i++ {
-		if filterBloom.Has(randString()) {
-			fp++
-		}
-	}
-	err := fp / float64(len(data))
-	if err > np*10 {
-		t.Fatalf("wanted %f error rate, got %f", np, err)
-	}
-	t.Logf("bloom: %f %f", fp, err)
+func TestAndreas(t *testing.T) {
+	testBloomFunc(t, func(s string) bool {
+		return filterAndreas.Has([]byte(s))
+	}, "AndreasBriese/bbloom")
 }
 
 func TestWillf(t *testing.T) {
-	var fp float64
-	for i := 0; i < 1e6; i++ {
-		if filterWillf.Test([]byte(randString())) {
-			fp++
-		}
-	}
-	err := fp / float64(len(data))
-	if err > np*10 {
-		t.Fatalf("wanted %f error rate, got %f", np, err)
-	}
-	t.Logf("willf: %f %f", fp, err)
+	testBloomFunc(t, filterWillf.TestString, "willf/bloom")
 }
 
-func TestSpencer(t *testing.T) {
-	var fp float64
-	for i := 0; i < 1e6; i++ {
-		if filterSpencer.HasKey(randString()) {
+func TestSpencerKimball(t *testing.T) {
+	testBloomFunc(t, filterSpencer.HasKey, "spencerkimball/cbfilter")
+}
+
+func testBloomFunc(t *testing.T, fn func(string) bool, name string) {
+	const niters = 1e6
+	var fp int
+	for i := 0; i < niters; i++ {
+		if fn(randString()) {
 			fp++
 		}
 	}
-	err := fp / float64(len(data))
-	if err > np*10 {
-		t.Fatalf("wanted %f error rate, got %f", np, err)
+	err := float64(fp) / float64(niters)
+	if err > prob {
+		if testing.Verbose() {
+			t.Errorf("wanted %f error rate, got %f", prob, err)
+		} else {
+			fmt.Printf("ERROR: (%s): wanted %f error rate, got %f\n", name, prob, err)
+		}
 	}
-	t.Logf("spencer: %f %f", fp, err)
+	t.Logf("%d false positives for an error rate of: %f", fp, err)
+}
+
+func TestFilter_MarshalBinary(t *testing.T) {
+	f := New(5, 0.2)
+	for _, v := range [...]string{"one", "two", "three", "four", "five"} {
+		f.Add(v)
+	}
+	b, err := f.MarshalBinary()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	var f2 Filter
+	err = f2.UnmarshalBinary(b)
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
