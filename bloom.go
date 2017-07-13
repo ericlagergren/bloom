@@ -1,6 +1,7 @@
 package bloom
 
 import (
+	"encoding"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -28,18 +29,15 @@ func (f *Filter) set(i uint64) {
 }
 
 // New creates a new Bloom Filter for n items with probability p.
-// p should be the between 0 and 1 and indicate the probability
-// of false positives wanted.
-// n should be a positive integer describing the number of items in
-// the filter.
+// p should be the between 0 and 1 and indicate the probability of false
+// positives wanted. n should be a positive integer describing the number of
+// items in the filter.
 func New(n int, p float64) *Filter {
-
 	// log(1 / pow(2, log(2)))
 	const lnsq = -0.480453013918201424667102526326664971730552951594545586866864133623665382259834472199948263443926990932715597661358897481255128413358268503177555294880844290839184664798896404335252423673643658092881230886029639112807153031
 
 	n0 := float64(n)
 	m := math.Ceil(n0 * math.Log(p) / lnsq)
-
 	nbits := uint64(m)
 
 	if nbits <= 512 {
@@ -57,11 +55,9 @@ func New(n int, p float64) *Filter {
 	}
 
 	return &Filter{
-		bits:  make([]uint64, nbits>>6),
-		nbits: nbits,
-
-		// Number rounds of hashing.
-		hashes: int(math.Ceil(math.Ln2 * m / n0)),
+		bits:   make([]uint64, nbits>>6),
+		nbits:  nbits,
+		hashes: int(math.Ceil(math.Ln2 * m / n0)), // number of hashing rounds
 	}
 }
 
@@ -78,7 +74,7 @@ func (f *Filter) Add(key string) {
 	f.items++
 }
 
-// Add adds a key to the filter.
+// AddBytes adds a key to the filter.
 func (f *Filter) AddBytes(key []byte) {
 	a, b := hash2(key)
 	m := f.nbits - 1
@@ -101,7 +97,7 @@ func (f *Filter) Has(key string) bool {
 	return true
 }
 
-// Has returns true if the key probably exists in the filter.
+// HasBytes returns true if the key probably exists in the filter.
 func (f *Filter) HasBytes(key []byte) bool {
 	a, b := hash2(key)
 	m := f.nbits - 1
@@ -114,20 +110,43 @@ func (f *Filter) HasBytes(key []byte) bool {
 	return true
 }
 
-const (
-	// Marshal version.
-	ver = 1
+// Size returns the approximate number of items in the filter. At most it
+// should be within 5% of the actual amount, assuming the number of items in
+// the filter is <= the original size of the filter.
+//
+// Full disclosure: in practice, the variance is less than 1%; 5% is absolute
+// maximum, tested up to 1e8 elements (see bloom_test.go). The algorithm is
+// from http://pubs.acs.org/doi/abs/10.1021/ci600526a, but since I do not have
+// access to ACS I do not know if the authors of the authors published the
+// variance of the algorithm.
+func (f *Filter) Size() int {
+	m := float64(f.nbits)
+	k := float64(f.hashes)
+	X := float64(f.popcount())
+	// n* = -(m/k) ln[1 - x/m]
+	return -int((m / k) * math.Log(1-(X/m)))
+}
 
-	// Bytes per word.
-	bpw = word >> 3
+func (f *Filter) popcount() int {
+	var n int
+	for _, word := range f.bits {
+		n += popcount(word)
+	}
+	return n
+}
+
+const (
+	ver = 1         // marshal version
+	bpw = word >> 3 // bytes per word
 )
 
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (f *Filter) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 1+ // ver
+	data = make([]byte, 1+ // version
 		bpw+ // items
 		bpw+ // hashes
-		(f.nbits>>3)) // bits
+		(f.nbits>>3), // bits
+	)
 	data[0] = ver
 	binary.LittleEndian.PutUint64(data[1:], f.items)
 	binary.LittleEndian.PutUint64(data[1+bpw:], uint64(f.hashes))
@@ -155,3 +174,10 @@ func (f *Filter) UnmarshalBinary(data []byte) error {
 	}
 	return nil
 }
+
+var (
+	_ interface {
+		encoding.BinaryMarshaler
+		encoding.BinaryUnmarshaler
+	} = (*Filter)(nil)
+)
