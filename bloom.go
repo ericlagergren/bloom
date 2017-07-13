@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+
+	"github.com/ericlagergren/siphash"
 )
 
 const (
@@ -17,7 +19,6 @@ type Filter struct {
 	bits   []uint64
 	nbits  uint64
 	hashes int
-	items  uint64
 }
 
 func (f *Filter) isSet(i uint64) bool {
@@ -61,48 +62,38 @@ func New(n int, p float64) *Filter {
 	}
 }
 
+const (
+	k0 = 17697571051839533707
+	k1 = 15128385881502100741
+)
+
 // Add adds a key to the filter.
 func (f *Filter) Add(key string) {
-	// "Less Hashing, Same Performance: Building a Better Bloom Filter
-	//  by Adam Kirsch and Michael Mitzenmacher"
-	// tells us gi(x) = h1(x) + ih2(x).
-	a, b := hash(key)
-	m := f.nbits - 1
-	for i := 0; i < f.hashes; i++ {
-		f.set((a + b*uint64(i)) & m)
-	}
-	f.items++
+	f.AddBytes(toBytes(key))
 }
 
 // AddBytes adds a key to the filter.
 func (f *Filter) AddBytes(key []byte) {
-	a, b := hash2(key)
+	// "Less Hashing, Same Performance: Building a Better Bloom Filter
+	//  by Adam Kirsch and Michael Mitzenmacher"
+	// tells us gi(x) = h1(x) + ih2(x).
+	a, b := siphash.Hash128(k0, k1, key)
 	m := f.nbits - 1
 	for i := 0; i < f.hashes; i++ {
 		f.set((a + b*uint64(i)) & m)
 	}
-	f.items++
 }
 
 // Has returns true if the key probably exists in the filter.
 func (f *Filter) Has(key string) bool {
-	a, b := hash(key)
-	m := f.nbits - 1
-	for i := 0; i < f.hashes; i++ {
-		// Any zero bits means the key has not been set yet.
-		if !f.isSet((a + b*uint64(i)) & m) {
-			return false
-		}
-	}
-	return true
+	return f.HasBytes(toBytes(key))
 }
 
 // HasBytes returns true if the key probably exists in the filter.
 func (f *Filter) HasBytes(key []byte) bool {
-	a, b := hash2(key)
+	a, b := siphash.Hash128(k0, k1, key)
 	m := f.nbits - 1
 	for i := 0; i < f.hashes; i++ {
-		// Any zero bits means the key has not been set yet.
 		if !f.isSet((a + b*uint64(i)) & m) {
 			return false
 		}
@@ -142,31 +133,29 @@ const (
 
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (f *Filter) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 1+ // version
-		bpw+ // items
-		bpw+ // hashes
-		(f.nbits>>3), // bits
+	data = make([]byte, 0 /* formatting :-) */ +
+		/* version */ 1+
+		/* hashes  */ bpw+
+		/* bits    */ (f.nbits>>3),
 	)
 	data[0] = ver
-	binary.LittleEndian.PutUint64(data[1:], f.items)
-	binary.LittleEndian.PutUint64(data[1+bpw:], uint64(f.hashes))
+	binary.LittleEndian.PutUint64(data[1:], uint64(f.hashes))
 	for i, w := range f.bits {
-		binary.LittleEndian.PutUint64(data[1+(bpw*(i+2)):], w)
+		binary.LittleEndian.PutUint64(data[1+(bpw*(i+1)):], w)
 	}
 	return data, nil
 }
 
 // MarshalBinary implements encoding.BinaryUnmarshaler.
 func (f *Filter) UnmarshalBinary(data []byte) error {
-	if len(data) < 1+bpw+bpw {
+	if len(data) < 1+bpw {
 		return errors.New("bloom.UnmarshalBinary: data too short, unknown encoding")
 	}
 	if data[0] != ver {
 		return errors.New("bloom.UnmarshalBinary: unknown encoding")
 	}
-	f.items = binary.LittleEndian.Uint64(data[1:])
-	f.hashes = int(binary.LittleEndian.Uint64(data[1+bpw:]))
-	data = data[1+(bpw+bpw):]
+	f.hashes = int(binary.LittleEndian.Uint64(data[1:]))
+	data = data[1+bpw:]
 	f.nbits = uint64(len(data) << 3)
 	f.bits = make([]uint64, (f.nbits >> 6))
 	for i := range f.bits {

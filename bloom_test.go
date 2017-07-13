@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 	defer rc.Close()
 
 	s := bufio.NewScanner(rc)
-	for i := 0; s.Scan(); i++ {
+	for i := 0; ; i++ {
 		if i%2 == 0 {
 			if !s.Scan() {
 				break
