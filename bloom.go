@@ -4,7 +4,6 @@ import (
 	"encoding"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 
 	"github.com/dchest/siphash"
@@ -26,7 +25,6 @@ func (d *Dynamic) AddBytes(key []byte) {
 	f := d.fs[len(d.fs)-1]
 	f.AddBytes(key)
 
-	//fmt.Println(f.Size(), f.N, f.P, len(d.fs))
 	if uint64(f.Size()) >= f.N {
 		n := f.N * 2
 
@@ -86,8 +84,6 @@ func New(n int, p float64) *Filter {
 	// slightly more space. Patches are welcome :-)
 	nbits := ((uint64(m) + mod64) >> div64) * wordBits
 	hashes := uint64(-int(math.Ceil(math.Log(p) / math.Ln2)))
-
-	fmt.Println(n, p, nbits, nbits>>div64, hashes)
 
 	return &Filter{
 		N:      uint64(n),
