@@ -2,6 +2,4 @@
 
 package bloom
 
-func toBytes(data string) []byte {
-	return []byte(data)
-}
+func toBytes(data string) []byte { return []byte(data) }
