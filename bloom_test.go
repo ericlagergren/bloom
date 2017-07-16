@@ -183,9 +183,32 @@ func testBloomFunc(t *testing.T, fn func(string) bool, name string) {
 		desc, fp, rate, prob)
 }
 
+var marshalInput = []string{"one", "two", "three", "four", "five"}
+
 func TestFilter_MarshalBinary(t *testing.T) {
-	input := [...]string{"one", "two", "three", "four", "five"}
-	f := New(len(input), prob)
+	f := New(len(marshalInput), prob)
+	f2 := New(len(marshalInput), prob)
+	testMarshalBinary(t, f, f2, marshalInput)
+}
+
+func TestDynamic_MarshalBinary(t *testing.T) {
+	f := NewDynamic(prob)
+	f2 := NewDynamic(prob)
+	testMarshalBinary(t, f, f2, marshalInput)
+}
+
+func testMarshalBinary(
+	t *testing.T,
+	f interface {
+		binMarshaler
+		Add(string)
+	},
+	f2 interface {
+		binMarshaler
+		Has(string) bool
+	},
+	input []string,
+) {
 	for _, v := range input {
 		f.Add(v)
 	}
@@ -193,12 +216,11 @@ func TestFilter_MarshalBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var f2 Filter
 	if err = f2.UnmarshalBinary(b); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(*f, f2) {
-		t.Fatalf("f != f2\n%#v\n%#v", f, &f2)
+	if !reflect.DeepEqual(f, f2) {
+		t.Fatalf("f != f2\n%#v\n%#v", f, f2)
 	}
 	for _, v := range input {
 		if !f2.Has(v) {
@@ -239,7 +261,7 @@ func TestFilter_Size(t *testing.T) {
 			min := round(float64(size) - v)
 			if sz != size && (sz > max || sz < min) {
 				t.Fatalf("size(%d): got %d (%f), wanted [%d, %d]",
-					size, sz, float64(size)/float64(sz), min, max)
+					size, sz, 1-(float64(size)/float64(sz)), min, max)
 			}
 
 			if testing.Verbose() {

@@ -4,9 +4,20 @@ import (
 	"encoding"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 
 	"github.com/dchest/siphash"
+)
+
+var (
+	// ErrUnknownEncoding is returned from UnmarshalBinary if the version isn't
+	// recognized.
+	ErrUnknownEncoding = errors.New("bloom: unknown encoding")
+
+	// ErrDataTooShort is returned from UnmarshalBinary if the length of the
+	// data is too short.
+	ErrDataTooShort = errors.New("bloom: data too short")
 )
 
 // Dynamic is a Bloom filter that doesn't need a pre-set size. The idea comes
@@ -50,6 +61,57 @@ func (d *Dynamic) HasBytes(key []byte) bool {
 }
 
 func (d *Dynamic) Has(key string) bool { return d.HasBytes(toBytes(key)) }
+
+func (d *Dynamic) MarshalBinary() (data []byte, err error) {
+	var p [binary.MaxVarintLen64]byte // length buf
+
+	data = append(data, ver)
+	n := binary.PutUvarint(p[:], uint64(len(d.fs)))
+	data = append(data, p[:n]...)
+	for _, f := range d.fs {
+		b, err := f.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		n = binary.PutUvarint(p[:], uint64(len(b)))
+		data = append(data, p[:n]...)
+		data = append(data, b...)
+	}
+	return data, err
+}
+
+func (d *Dynamic) UnmarshalBinary(data []byte) error {
+	if data[0] != ver {
+		return ErrUnknownEncoding
+	}
+	data = data[1:]
+
+	length, n := binary.Uvarint(data)
+	if n <= 0 {
+		return fmt.Errorf("bloom: bad uvarint encoding: %d", n)
+	}
+	data = data[n:]
+
+	d.fs = make([]*Filter, length)
+	for i := range d.fs {
+		length, n = binary.Uvarint(data)
+		if n <= 0 {
+			return fmt.Errorf("bloom: bad uvarint encoding: %d", n)
+		}
+		data = data[n:]
+
+		var f Filter
+		if err := f.UnmarshalBinary(data); err != nil {
+			return err
+		}
+		d.fs[i] = &f
+		data = data[length:]
+	}
+	if len(data) != 0 {
+		return ErrDataTooShort
+	}
+	return nil
+}
 
 // Filter is a Bloom filter.
 type Filter struct {
@@ -155,33 +217,42 @@ func (f *Filter) Size() int {
 	m := float64(f.nbits)
 	k := float64(f.hashes)
 	X := float64(f.popcount)
-	// n* = -(m/k) ln[1 - x/m]
+	// n* = -(m/k) ln[1 - x/m], floor + 0.5 for rounding.
 	return int(math.Floor(-((m / k) * math.Log(1-(X/m))) + 0.5))
 }
 
 // Stats returns basic memory information. hashes is the number of hash
 // functions and nbits is the number of usable bits. The total number of bits
 // allocated by the filter will be nbits rounded up to the nearest multiple of
-// 64.
-func (f *Filter) Stats() (hashes, nbits uint64) {
-	return f.hashes, f.nbits
+// 64. popcount is the number of set bits.
+func (f *Filter) Stats() (hashes, nbits, popcount uint64) {
+	return f.hashes, f.nbits, uint64(f.popcount)
 }
 
-const ver = 1 // marshal version
+const (
+	ver          = 1 // marshal version
+	leadingWords = 5 // N, P, hashes, popcounts, nbits
+)
 
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (f *Filter) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 0 /* formatting :-) */ +
-		/* version */ 1+
-		/* n       */ wordBytes+
-		/* hashes  */ wordBytes+
-		/* bits    */ (f.nbits>>div8),
+		/* version  */ 1+
+		/* N        */ wordBytes+
+		/* P        */ wordBytes+
+		/* hashes   */ wordBytes+
+		/* popcount */ wordBytes+
+		/* nbits    */ wordBytes+
+		/* bits     */ (f.nbits>>div8),
 	)
 	data[0] = ver
-	binary.LittleEndian.PutUint64(data[1:], f.N)
-	binary.LittleEndian.PutUint64(data[1+wordBytes:], f.hashes)
+	binary.LittleEndian.PutUint64(data[1+wordBytes*0:], f.N)
+	binary.LittleEndian.PutUint64(data[1+wordBytes*1:], math.Float64bits(f.P))
+	binary.LittleEndian.PutUint64(data[1+wordBytes*2:], f.hashes)
+	binary.LittleEndian.PutUint64(data[1+wordBytes*3:], uint64(f.popcount))
+	binary.LittleEndian.PutUint64(data[1+wordBytes*4:], f.nbits)
 	for i, w := range f.bits {
-		offset := 1 + ((i + 2) * wordBytes)
+		offset := 1 + ((i + leadingWords) * wordBytes)
 		binary.LittleEndian.PutUint64(data[offset:], w)
 	}
 	return data, nil
@@ -189,31 +260,43 @@ func (f *Filter) MarshalBinary() (data []byte, err error) {
 
 // UnmarshalBinary implements encoding.BinaryUnmarshaler.
 func (f *Filter) UnmarshalBinary(data []byte) error {
-	if len(data) < 1+(wordBytes*2) {
-		return errors.New("bloom.UnmarshalBinary: data too short, unknown encoding")
+	if len(data) < 1+wordBytes*leadingWords {
+		return ErrDataTooShort
 	}
 	if data[0] != ver {
-		return errors.New("bloom.UnmarshalBinary: unknown encoding")
+		return ErrUnknownEncoding
 	}
 	data = data[1:]
 
 	f.N = binary.LittleEndian.Uint64(data)
 	data = data[wordBytes:]
 
+	f.P = math.Float64frombits(binary.LittleEndian.Uint64(data))
+	data = data[wordBytes:]
+
 	f.hashes = binary.LittleEndian.Uint64(data)
 	data = data[wordBytes:]
 
-	f.nbits = uint64(len(data)) << div8
+	f.popcount = int(binary.LittleEndian.Uint64(data))
+	data = data[wordBytes:]
+
+	f.nbits = binary.LittleEndian.Uint64(data)
+	data = data[wordBytes:]
+
 	f.bits = make([]uint64, f.nbits>>div64)
 	for i := range f.bits {
-		f.bits[i] = binary.LittleEndian.Uint64(data[i*wordBytes:])
+		f.bits[i] = binary.LittleEndian.Uint64(data)
+		data = data[wordBytes:]
 	}
 	return nil
 }
 
+type binMarshaler interface {
+	encoding.BinaryMarshaler
+	encoding.BinaryUnmarshaler
+}
+
 var (
-	_ interface {
-		encoding.BinaryMarshaler
-		encoding.BinaryUnmarshaler
-	} = (*Filter)(nil)
+	_ binMarshaler = (*Filter)(nil)
+	_ binMarshaler = (*Dynamic)(nil)
 )
