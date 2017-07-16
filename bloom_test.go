@@ -137,10 +137,115 @@ func BenchmarkMap(b *testing.B) {
 	ghas = lhas
 }
 
+var testInput = []string{"one", "two", "three", "four", "five"}
+
+func TestBloom_Union(t *testing.T) {
+	n := len(testInput)
+	f1 := New(n, prob)
+	f2 := New(n, prob)
+
+	for _, v := range testInput {
+		f2.Add(v)
+	}
+
+	if err := f1.Union(f1, f2); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range testInput {
+		if !f1.Has(v) || !f2.Has(v) {
+			t.Fatalf("both should have %s", v)
+		}
+	}
+
+	f2.Add("foo")
+
+	if f1.Size() == f2.Size() {
+		t.Fatal("f1 and f2 should have different sizes")
+	}
+
+	var f Filter
+	if err := f.Union(f1, f2); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range testInput {
+		if !f.Has(v) || !f1.Has(v) || !f2.Has(v) {
+			t.Fatalf("all should have %s", v)
+		}
+	}
+
+	if !f.Has("foo") {
+		t.Fatal("f must have 'foo'")
+	}
+}
+
+func TestBloom_Intersect(t *testing.T) {
+	n := len(testInput)
+	f1 := New(n, prob)
+	f2 := New(n, prob)
+
+	for _, v := range testInput {
+		f2.Add(v)
+	}
+
+	if err := f1.Intersect(f1, f2); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range testInput {
+		if f1.Has(v) {
+			t.Fatalf("f1 should not have %s", v)
+		}
+		f1.Add(v)
+	}
+
+	f1.Add("foo")
+
+	var f Filter
+	if err := f.Intersect(f1, f2); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range testInput {
+		if !f.Has(v) || !f1.Has(v) || !f2.Has(v) {
+			t.Fatalf("all should have %s", v)
+		}
+	}
+
+	if f.Has("foo") {
+		t.Fatal("f should not have 'foo'")
+	}
+}
+
+func TestBloom_Jaccard(t *testing.T) {
+	const inputs = "01233456789"
+	const N = 8
+	a := New(N, prob) // 0 1 2 3 4 5 6 7
+	b := New(N, prob) // 9 8 7 6 5 4 3 2
+
+	for i := 0; i < N; i++ {
+		a.Add(string(inputs[i]))
+		b.Add(string(inputs[len(inputs)-(i+1)]))
+	}
+
+	idx, err := Jaccard(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const c = 4.0 /* intersection */ / 10 /* union */
+	if idx != c {
+		t.Fatalf("wanted %f, got %f", c, idx)
+	}
+}
+
 const myFilter = "EricLagergren/bloom."
 
 func TestBloom(t *testing.T) {
 	testBloomFunc(t, filterBloom.Has, myFilter+"Filter")
+}
+
+func TestDynamicBloom(t *testing.T) {
 	testBloomFunc(t, dynamicBloom.Has, myFilter+"Dynamic")
 }
 
@@ -183,18 +288,16 @@ func testBloomFunc(t *testing.T, fn func(string) bool, name string) {
 		desc, fp, rate, prob)
 }
 
-var marshalInput = []string{"one", "two", "three", "four", "five"}
-
 func TestFilter_MarshalBinary(t *testing.T) {
-	f := New(len(marshalInput), prob)
-	f2 := New(len(marshalInput), prob)
-	testMarshalBinary(t, f, f2, marshalInput)
+	f := New(len(testInput), prob)
+	f2 := New(len(testInput), prob)
+	testMarshalBinary(t, f, f2, testInput)
 }
 
 func TestDynamic_MarshalBinary(t *testing.T) {
 	f := NewDynamic(prob)
 	f2 := NewDynamic(prob)
-	testMarshalBinary(t, f, f2, marshalInput)
+	testMarshalBinary(t, f, f2, testInput)
 }
 
 func testMarshalBinary(

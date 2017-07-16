@@ -189,6 +189,16 @@ func (f *Filter) AddBytes(key []byte) {
 // Add adds a key to the filter.
 func (f *Filter) Add(key string) { f.AddBytes(toBytes(key)) }
 
+// ErrRate returns the estimated false positive rate based on the number of
+// items in the filter. This approaches 1 as more items are added to the
+// filter.
+func (f *Filter) ErrRate() float64 {
+	// (1 - e**(-hashes * items / bits))**hashes
+	k := -float64(f.hashes*uint64(f.Size())) / float64(f.nbits)
+	x := 1 - math.Exp(k)
+	return math.Pow(x, float64(f.hashes))
+}
+
 // HasBytes returns true if the key probably exists in the filter.
 func (f *Filter) HasBytes(key []byte) bool {
 	a, b := siphash.Hash128(k0, k1, key)
@@ -204,6 +214,75 @@ func (f *Filter) HasBytes(key []byte) bool {
 // Has returns true if the key probably exists in the filter.
 func (f *Filter) Has(key string) bool { return f.HasBytes(toBytes(key)) }
 
+// initMerge sets up a union or intersection. It assigns the proper values to
+// f, leaving only the bit vector and popcount to be assigned.
+func (f *Filter) initMerge(f1, f2 *Filter) ([]uint64, error) {
+	if f1.nbits != f2.nbits {
+		return nil, errors.New("bloom.Filter: different number of bits ")
+	}
+	if f1.P != f2.P {
+		return nil, errors.New("bloom.Filter: different P values")
+	}
+
+	var bits []uint64
+	switch {
+	case f == f1:
+		bits = f1.bits
+	case f == f2:
+		bits = f2.bits
+	// This branch assumes len(bits) == nbits>>div64.
+	case f.nbits >= f1.nbits:
+		bits = f.bits[:f.nbits>>div64]
+	default:
+		bits = make([]uint64, f1.nbits>>div64)
+	}
+
+	f.P = f1.P
+	f.nbits = f1.nbits
+	f.hashes = f1.hashes
+	return bits, nil
+}
+
+// Intersect sets f to the intersection of f1 and f2. Intersect's special cases
+// are the same as Union's.
+func (f *Filter) Intersect(f1, f2 *Filter) error {
+	if f == f2 {
+		return nil
+	}
+
+	bits, err := f.initMerge(f1, f2)
+	if err != nil {
+		return err
+	}
+
+	pcnt := 0
+	for i, word := range f1.bits {
+		bits[i] = word & f2.bits[i]
+		pcnt += popcount(bits[i])
+	}
+	f.bits = bits
+	f.popcount = pcnt
+	return nil
+}
+
+// Jaccard estimates the Jaccard Index of a and b. Its special cases are the
+// same as Union's.
+func Jaccard(a, b *Filter) (float64, error) {
+	var f Filter
+	if err := f.Intersect(a, b); err != nil {
+		return 0, err
+	}
+	as := f.Size()
+	if err := f.Union(a, b); err != nil {
+		return 0, err
+	}
+	// If b == 0 the result == NaN.
+	if bs := f.Size(); bs != 0 {
+		return float64(as) / float64(bs), nil
+	}
+	return 0, nil
+}
+
 // Size returns the approximate number of items in the filter. At most it
 // should be within 3.5% of the actual amount, assuming the number of items in
 // the filter is <= the original size of the filter.
@@ -217,7 +296,7 @@ func (f *Filter) Size() int {
 	m := float64(f.nbits)
 	k := float64(f.hashes)
 	X := float64(f.popcount)
-	// n* = -(m/k) ln[1 - x/m], floor + 0.5 for rounding.
+	// n ~= -(m/k) ln[1 - x/m], floor + 0.5 for rounding.
 	return int(math.Floor(-((m / k) * math.Log(1-(X/m))) + 0.5))
 }
 
@@ -227,6 +306,32 @@ func (f *Filter) Size() int {
 // 64. popcount is the number of set bits.
 func (f *Filter) Stats() (hashes, nbits, popcount uint64) {
 	return f.hashes, f.nbits, uint64(f.popcount)
+}
+
+// Union sets f to the union of f1 and f2.
+//
+// The union of two filters can only be taken if their P values are the same
+// and their bit vectors are the same length. In practice, this means
+// f1.P == f2.P && f1.N == f2.N. f will not be modified if err != nil. It is
+// safe for f to alias either f1 or f2.
+func (f *Filter) Union(f1, f2 *Filter) error {
+	if f1 == f2 {
+		return nil
+	}
+
+	bits, err := f.initMerge(f1, f2)
+	if err != nil {
+		return err
+	}
+
+	pcnt := 0
+	for i, word := range f1.bits {
+		bits[i] = word | f2.bits[i]
+		pcnt += popcount(bits[i])
+	}
+	f.bits = bits
+	f.popcount = pcnt
+	return nil
 }
 
 const (
