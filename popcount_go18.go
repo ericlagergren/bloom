@@ -2,8 +2,8 @@
 
 package bloom
 
-func popcount(x uint64) int {
-	count := 0
+func popcount(x uint64) uint64 {
+	var count uint64
 	for x != 0 {
 		x &= x - 1
 		count++

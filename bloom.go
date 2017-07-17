@@ -121,7 +121,7 @@ type Filter struct {
 	bits     []uint64 // bit array
 	nbits    uint64   // number of usable bits
 	hashes   uint64   // number of hash functions
-	popcount int      // popcount
+	popcount uint64   // popcount
 }
 
 // New creates a new Bloom filter for n items with probability p.
@@ -305,7 +305,7 @@ func (f *Filter) Size() int {
 // allocated by the filter will be nbits rounded up to the nearest multiple of
 // 64. popcount is the number of set bits.
 func (f *Filter) Stats() (hashes, nbits, popcount uint64) {
-	return f.hashes, f.nbits, uint64(f.popcount)
+	return f.hashes, f.nbits, f.popcount
 }
 
 // Union sets f to the union of f1 and f2.
@@ -354,7 +354,7 @@ func (f *Filter) MarshalBinary() (data []byte, err error) {
 	binary.LittleEndian.PutUint64(data[1+wordBytes*0:], f.N)
 	binary.LittleEndian.PutUint64(data[1+wordBytes*1:], math.Float64bits(f.P))
 	binary.LittleEndian.PutUint64(data[1+wordBytes*2:], f.hashes)
-	binary.LittleEndian.PutUint64(data[1+wordBytes*3:], uint64(f.popcount))
+	binary.LittleEndian.PutUint64(data[1+wordBytes*3:], f.popcount)
 	binary.LittleEndian.PutUint64(data[1+wordBytes*4:], f.nbits)
 	for i, w := range f.bits {
 		offset := 1 + ((i + leadingWords) * wordBytes)
@@ -382,7 +382,7 @@ func (f *Filter) UnmarshalBinary(data []byte) error {
 	f.hashes = binary.LittleEndian.Uint64(data)
 	data = data[wordBytes:]
 
-	f.popcount = int(binary.LittleEndian.Uint64(data))
+	f.popcount = binary.LittleEndian.Uint64(data)
 	data = data[wordBytes:]
 
 	f.nbits = binary.LittleEndian.Uint64(data)
