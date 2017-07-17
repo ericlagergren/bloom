@@ -246,7 +246,7 @@ func (f *Filter) initMerge(f1, f2 *Filter) ([]uint64, error) {
 // Intersect sets f to the intersection of f1 and f2. Intersect's special cases
 // are the same as Union's.
 func (f *Filter) Intersect(f1, f2 *Filter) error {
-	if f == f2 {
+	if f1 == f2 {
 		return nil
 	}
 

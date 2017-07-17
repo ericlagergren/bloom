@@ -137,6 +137,27 @@ func BenchmarkMap(b *testing.B) {
 	ghas = lhas
 }
 
+var globb []byte
+
+func BenchmarkBloom_MarshalBinary(b *testing.B) {
+	var buf []byte
+	for i := 0; i < b.N; i++ {
+		buf, _ = filterBloom.MarshalBinary()
+	}
+	globb = buf
+}
+
+func BenchmarkBloom_UnmarshalBinary(b *testing.B) {
+	b.StopTimer()
+	buf, _ := filterBloom.MarshalBinary()
+	var f Filter
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		f.UnmarshalBinary(buf)
+	}
+}
+
 var testInput = []string{"one", "two", "three", "four", "five"}
 
 func TestBloom_Union(t *testing.T) {
