@@ -255,7 +255,7 @@ func (f *Filter) Intersect(f1, f2 *Filter) error {
 		return err
 	}
 
-	pcnt := 0
+	var pcnt uint64
 	for i, word := range f1.bits {
 		bits[i] = word & f2.bits[i]
 		pcnt += popcount(bits[i])
@@ -324,7 +324,7 @@ func (f *Filter) Union(f1, f2 *Filter) error {
 		return err
 	}
 
-	pcnt := 0
+	var pcnt uint64
 	for i, word := range f1.bits {
 		bits[i] = word | f2.bits[i]
 		pcnt += popcount(bits[i])
